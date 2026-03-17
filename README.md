@@ -1,6 +1,6 @@
 # crawl-cli
 
-Interactive CLI for using the [Cloudflare Browser Rendering API](https://developers.cloudflare.com/browser-rendering/).
+Interactive CLI and command-line tool for the [Cloudflare Browser Rendering Crawl API](https://developers.cloudflare.com/browser-rendering/).
 
 ## Setup
 
@@ -18,14 +18,38 @@ CF_API_TOKEN=your_api_token
 
 ## Usage
 
+**Interactive mode** — run without arguments for the full menu:
+
 ```bash
 python main.py
 ```
 
-The interactive menu lets you:
+**CLI mode** — pass a subcommand to skip the menu:
 
-- **Start a new crawl** — specify a URL, page limit, and resource types to block
-- **Check job status** — poll pending jobs and download results when complete
-- **List previous crawls** — view all past crawl jobs and their status
+```bash
+python main.py crawl --url https://example.com --limit 50 --formats markdown
+python main.py list
+python main.py status JOB_ID
+```
 
-Results are saved as JSON in the `output/` directory.
+Results are saved under `output/{job_id}/`.
+
+## Docs
+
+- [CLI Reference](docs/cli.md) — all subcommands and flags
+- [Advanced Crawl Options](docs/advanced-options.md) — depth, URL patterns, rendering, auth, and more
+- [Batch Crawling](docs/batch.md) — crawl multiple URLs from a file
+
+## Project Structure
+
+```
+main.py              # Entry point: CLI vs interactive dispatch
+crawl/
+  config.py           # .env loading, API config, constants
+  api.py              # HTTP: start, poll, paginate, cancel
+  jobs.py             # crawl_jobs.json management
+  prompts.py          # Interactive questionary flows + menu
+  output.py           # Save results, search, stats, diff
+  cli.py              # argparse CLI mode
+  batch.py            # Batch crawling from URL list
+```

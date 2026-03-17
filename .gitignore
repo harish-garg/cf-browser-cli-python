@@ -3,3 +3,4 @@ venv
 .claude
 crawl_jobs.json
 output
+__pycache__/
