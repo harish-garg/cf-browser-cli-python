@@ -2,11 +2,13 @@ import argparse
 import sys
 import time
 import json
-from crawl.config import RESOURCE_TYPES, DEFAULT_REJECT_RESOURCES, TERMINAL_STATUSES, SUCCESS_STATUSES
-from crawl.api import start_crawl, get_crawl_status, cancel_crawl, poll_until_complete, get_crawl_results_paginated
-from crawl.jobs import load_jobs, add_job, update_job, find_job
-from crawl.output import save_results, get_statistics, search_results, diff_crawls
-from crawl.batch import run_batch
+from core.config import RESOURCE_TYPES, DEFAULT_REJECT_RESOURCES, TERMINAL_STATUSES, SUCCESS_STATUSES, SCREENSHOT_FORMATS, WAIT_UNTIL_OPTIONS
+from core.api import start_crawl, get_crawl_status, cancel_crawl, poll_until_complete, get_crawl_results_paginated
+from core.jobs import load_jobs, add_job, update_job, find_job
+from core.output import save_results, get_statistics, search_results, diff_crawls
+from core.batch import run_batch, load_urls
+from core.screenshot_api import take_screenshot
+from core.screenshot_output import save_screenshot, log_screenshot
 
 
 def build_parser():
@@ -79,6 +81,39 @@ def build_parser():
         help="Resource types to reject",
     )
     batch_p.add_argument("--no-wait", action="store_true", help="Don't wait for completion")
+
+    # screenshot
+    ss_p = sub.add_parser("screenshot", help="Take a screenshot of a URL")
+    ss_p.add_argument("--url", required=True, help="URL to screenshot")
+    ss_p.add_argument("--output", help="Custom output file path")
+    ss_p.add_argument("--full-page", action="store_true", help="Capture full scrollable page")
+    ss_p.add_argument("--format", choices=SCREENSHOT_FORMATS, default="png", help="Image format (default: png)")
+    ss_p.add_argument("--quality", type=int, help="JPEG/WebP quality 0-100")
+    ss_p.add_argument("--width", type=int, default=1280, help="Viewport width (default: 1280)")
+    ss_p.add_argument("--height", type=int, default=720, help="Viewport height (default: 720)")
+    ss_p.add_argument("--device-scale", type=float, help="Device scale factor")
+    ss_p.add_argument("--selector", help="CSS selector to capture")
+    ss_p.add_argument("--wait-for", help="Wait for CSS selector before capture")
+    ss_p.add_argument("--wait-until", choices=WAIT_UNTIL_OPTIONS, help="Navigation wait event")
+    ss_p.add_argument("--timeout", type=int, help="Navigation timeout in ms")
+    ss_p.add_argument("--omit-background", action="store_true", help="Transparent background")
+    ss_p.add_argument("--user-agent", help="Custom user agent string")
+    ss_p.add_argument("--label", help="Filename label suffix")
+
+    # screenshot-batch
+    ssb_p = sub.add_parser("screenshot-batch", help="Batch screenshots from URL file")
+    ssb_p.add_argument("--file", required=True, help="Path to URL list file")
+    ssb_p.add_argument("--full-page", action="store_true", help="Capture full scrollable page")
+    ssb_p.add_argument("--format", choices=SCREENSHOT_FORMATS, default="png", help="Image format (default: png)")
+    ssb_p.add_argument("--quality", type=int, help="JPEG/WebP quality 0-100")
+    ssb_p.add_argument("--width", type=int, default=1280, help="Viewport width (default: 1280)")
+    ssb_p.add_argument("--height", type=int, default=720, help="Viewport height (default: 720)")
+    ssb_p.add_argument("--device-scale", type=float, help="Device scale factor")
+    ssb_p.add_argument("--wait-for", help="Wait for CSS selector before capture")
+    ssb_p.add_argument("--wait-until", choices=WAIT_UNTIL_OPTIONS, help="Navigation wait event")
+    ssb_p.add_argument("--timeout", type=int, help="Navigation timeout in ms")
+    ssb_p.add_argument("--omit-background", action="store_true", help="Transparent background")
+    ssb_p.add_argument("--user-agent", help="Custom user agent string")
 
     return parser
 
@@ -296,6 +331,88 @@ def cmd_batch(args):
     run_batch(args.file, base_payload, wait=not args.no_wait, formats=args.formats)
 
 
+def _build_screenshot_payload(args):
+    payload = {
+        "url": args.url,
+        "viewport": {"width": args.width, "height": args.height},
+    }
+
+    if args.full_page:
+        payload["fullPage"] = True
+    if args.format != "png":
+        payload["type"] = args.format
+    if args.quality is not None:
+        payload["quality"] = args.quality
+    if args.device_scale is not None:
+        payload["viewport"]["deviceScaleFactor"] = args.device_scale
+    if getattr(args, "selector", None):
+        payload["selector"] = args.selector
+    if args.wait_for:
+        payload["waitForSelector"] = {"selector": args.wait_for}
+    if args.wait_until:
+        payload["gotoOptions"] = {"waitUntil": args.wait_until}
+    if args.timeout is not None:
+        payload.setdefault("gotoOptions", {})["timeout"] = args.timeout
+    if args.omit_background:
+        payload["omitBackground"] = True
+    if args.user_agent:
+        payload["userAgent"] = args.user_agent
+
+    return payload
+
+
+def cmd_screenshot(args):
+    payload = _build_screenshot_payload(args)
+    fmt = args.format
+
+    print(f"Taking screenshot of: {args.url}")
+    image_bytes, content_type, err = take_screenshot(payload)
+
+    if err:
+        print(f"Screenshot failed: {err}")
+        sys.exit(1)
+
+    if args.output:
+        import os
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+        with open(args.output, "wb") as f:
+            f.write(image_bytes)
+        filepath = args.output
+    else:
+        filepath = save_screenshot(args.url, image_bytes, content_type, label=args.label)
+
+    log_screenshot(args.url, filepath, payload)
+    print(f"Screenshot saved to: {filepath}")
+
+
+def cmd_screenshot_batch(args):
+    urls = load_urls(args.file)
+    if not urls:
+        print("No URLs found in file.")
+        sys.exit(1)
+
+    print(f"Found {len(urls)} URL(s) to screenshot.\n")
+    success_count = 0
+
+    for i, url in enumerate(urls, 1):
+        args.url = url
+        payload = _build_screenshot_payload(args)
+
+        print(f"[{i}/{len(urls)}] Screenshotting: {url}")
+        image_bytes, content_type, err = take_screenshot(payload)
+
+        if err:
+            print(f"  Failed: {err}")
+            continue
+
+        filepath = save_screenshot(url, image_bytes, content_type)
+        log_screenshot(url, filepath, payload)
+        print(f"  Saved: {filepath}")
+        success_count += 1
+
+    print(f"\nBatch complete. {success_count}/{len(urls)} screenshots saved.")
+
+
 def run_cli(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -312,6 +429,8 @@ def run_cli(argv=None):
         "search": cmd_search,
         "diff": cmd_diff,
         "batch": cmd_batch,
+        "screenshot": cmd_screenshot,
+        "screenshot-batch": cmd_screenshot_batch,
     }
 
     handler = commands.get(args.command)

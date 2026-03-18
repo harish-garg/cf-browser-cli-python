@@ -1,7 +1,7 @@
 import time
 import requests
-from crawl.config import get_api_config, TERMINAL_STATUSES, SUCCESS_STATUSES, FAILURE_STATUSES
-from crawl.jobs import update_job
+from core.config import get_api_config, TERMINAL_STATUSES, SUCCESS_STATUSES, FAILURE_STATUSES
+from core.jobs import update_job
 
 
 def start_crawl(payload):

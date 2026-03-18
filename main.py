@@ -1,7 +1,7 @@
 import sys
 
-from crawl.cli import run_cli
-from crawl.prompts import interactive_menu
+from core.cli import run_cli
+from core.prompts import interactive_menu
 
 
 def main():

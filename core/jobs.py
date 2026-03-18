@@ -1,7 +1,7 @@
 import os
 import json
 import time
-from crawl.config import JOBS_FILE
+from core.config import JOBS_FILE
 
 
 def load_jobs():

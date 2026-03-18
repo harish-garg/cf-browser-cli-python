@@ -1,7 +1,7 @@
 import os
 import re
 import json
-from crawl.config import OUTPUT_DIR
+from core.config import OUTPUT_DIR
 
 
 def sanitize_filename(url):

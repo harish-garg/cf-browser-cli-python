@@ -42,8 +42,12 @@ CRAWL_SOURCES = ["all", "sitemaps", "links"]
 
 OUTPUT_FORMATS = ["html", "markdown", "json"]
 
+SCREENSHOT_FORMATS = ["png", "jpeg", "webp"]
 
-def get_api_config():
+WAIT_UNTIL_OPTIONS = ["load", "domcontentloaded", "networkidle0", "networkidle2"]
+
+
+def _get_credentials():
     account_id = os.environ.get("CF_ACCOUNT_ID")
     api_token = os.environ.get("CF_API_TOKEN")
 
@@ -51,7 +55,22 @@ def get_api_config():
         print("Error: CF_ACCOUNT_ID and CF_API_TOKEN must be set in .env")
         sys.exit(1)
 
+    return account_id, api_token
+
+
+def get_api_config():
+    account_id, api_token = _get_credentials()
     base_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/browser-rendering/crawl"
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+    return base_url, headers
+
+
+def get_screenshot_api_config():
+    account_id, api_token = _get_credentials()
+    base_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/browser-rendering/screenshot"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json",

@@ -1,17 +1,21 @@
 import os
 import time
 import questionary
-from crawl.config import (
+from core.config import (
     RESOURCE_TYPES,
     DEFAULT_REJECT_RESOURCES,
     CRAWL_SOURCES,
     OUTPUT_FORMATS,
     TERMINAL_STATUSES,
     SUCCESS_STATUSES,
+    SCREENSHOT_FORMATS,
+    WAIT_UNTIL_OPTIONS,
 )
-from crawl.jobs import load_jobs, add_job, update_job, delete_jobs, get_jobs_by_status, find_job
-from crawl.api import start_crawl, get_crawl_status, cancel_crawl, poll_until_complete, get_crawl_results_paginated
-from crawl.output import save_results, search_results, get_statistics, diff_crawls, find_result_path
+from core.jobs import load_jobs, add_job, update_job, delete_jobs, get_jobs_by_status, find_job
+from core.api import start_crawl, get_crawl_status, cancel_crawl, poll_until_complete, get_crawl_results_paginated
+from core.output import save_results, search_results, get_statistics, diff_crawls, find_result_path
+from core.screenshot_api import take_screenshot
+from core.screenshot_output import save_screenshot, log_screenshot
 
 
 def _validate_url(val):
@@ -702,7 +706,7 @@ def prompt_diff_crawls():
 
 
 def prompt_batch_crawl():
-    from crawl.batch import run_batch
+    from core.batch import run_batch
 
     file_path = questionary.path(
         "Path to URL list file:",
@@ -748,12 +752,188 @@ def prompt_batch_crawl():
     run_batch(file_path, base_payload, wait=wait, formats=formats)
 
 
+def prompt_screenshot():
+    url = questionary.text(
+        "URL to screenshot:",
+        default="https://example.com",
+        validate=_validate_url,
+    ).ask()
+    if url is None:
+        return
+
+    full_page = questionary.confirm("Capture full scrollable page?", default=False).ask()
+
+    fmt = questionary.select(
+        "Image format:",
+        choices=SCREENSHOT_FORMATS,
+        default="png",
+    ).ask()
+    if fmt is None:
+        return
+
+    payload = {"url": url}
+    if full_page:
+        payload["fullPage"] = True
+    if fmt != "png":
+        payload["type"] = fmt
+
+    if fmt in ("jpeg", "webp"):
+        quality = questionary.text(
+            "Image quality (0-100, leave empty for default):",
+            default="",
+            validate=lambda v: True if not v else (
+                _validate_non_negative_int(v) if v.isdigit() and int(v) <= 100
+                else "Must be 0-100"
+            ),
+        ).ask()
+        if quality:
+            payload["quality"] = int(quality)
+
+    width = questionary.text(
+        "Viewport width:",
+        default="1280",
+        validate=_validate_positive_int,
+    ).ask()
+    height = questionary.text(
+        "Viewport height:",
+        default="720",
+        validate=_validate_positive_int,
+    ).ask()
+    payload["viewport"] = {"width": int(width), "height": int(height)}
+
+    advanced = questionary.confirm("Configure advanced options?", default=False).ask()
+    if advanced:
+        selector = questionary.text(
+            "CSS selector to capture (leave empty for full page):",
+            default="",
+        ).ask()
+        if selector:
+            payload["selector"] = selector
+
+        wait_for = questionary.text(
+            "Wait for CSS selector before capture (leave empty to skip):",
+            default="",
+        ).ask()
+        if wait_for:
+            payload["waitForSelector"] = {"selector": wait_for}
+
+        wait_until = questionary.select(
+            "Navigation wait event:",
+            choices=["(default)"] + WAIT_UNTIL_OPTIONS,
+            default="(default)",
+        ).ask()
+        if wait_until and wait_until != "(default)":
+            payload["gotoOptions"] = {"waitUntil": wait_until}
+
+        omit_bg = questionary.confirm("Transparent background?", default=False).ask()
+        if omit_bg:
+            payload["omitBackground"] = True
+
+        user_agent = questionary.text(
+            "Custom user agent (leave empty to skip):",
+            default="",
+        ).ask()
+        if user_agent:
+            payload["userAgent"] = user_agent
+
+        device_scale = questionary.text(
+            "Device scale factor (leave empty for default):",
+            default="",
+            validate=lambda v: True if not v else (
+                True if v.replace(".", "", 1).isdigit() and float(v) > 0
+                else "Must be a positive number"
+            ),
+        ).ask()
+        if device_scale:
+            payload["viewport"]["deviceScaleFactor"] = float(device_scale)
+
+    label = questionary.text("Label for this screenshot (optional):", default="").ask()
+
+    print(f"\nTaking screenshot of: {url}")
+    image_bytes, content_type, err = take_screenshot(payload)
+
+    if err:
+        print(f"Screenshot failed: {err}")
+        return
+
+    filepath = save_screenshot(url, image_bytes, content_type, label=label or None)
+    log_screenshot(url, filepath, payload)
+    print(f"Screenshot saved to: {filepath}")
+
+
+def prompt_screenshot_batch():
+    from core.batch import load_urls
+
+    file_path = questionary.path(
+        "Path to URL list file:",
+        validate=lambda v: True if os.path.isfile(v) else "File not found",
+    ).ask()
+    if not file_path:
+        return
+
+    fmt = questionary.select(
+        "Image format:",
+        choices=SCREENSHOT_FORMATS,
+        default="png",
+    ).ask()
+    if fmt is None:
+        return
+
+    full_page = questionary.confirm("Capture full scrollable page?", default=False).ask()
+
+    width = questionary.text(
+        "Viewport width:",
+        default="1280",
+        validate=_validate_positive_int,
+    ).ask()
+    height = questionary.text(
+        "Viewport height:",
+        default="720",
+        validate=_validate_positive_int,
+    ).ask()
+
+    urls = load_urls(file_path)
+    if not urls:
+        print("No URLs found in file.")
+        return
+
+    print(f"\nFound {len(urls)} URL(s) to screenshot.\n")
+    success_count = 0
+
+    for i, url in enumerate(urls, 1):
+        payload = {
+            "url": url,
+            "viewport": {"width": int(width), "height": int(height)},
+        }
+        if full_page:
+            payload["fullPage"] = True
+        if fmt != "png":
+            payload["type"] = fmt
+
+        print(f"[{i}/{len(urls)}] Screenshotting: {url}")
+        image_bytes, content_type, err = take_screenshot(payload)
+
+        if err:
+            print(f"  Failed: {err}")
+            continue
+
+        filepath = save_screenshot(url, image_bytes, content_type)
+        log_screenshot(url, filepath, payload)
+        print(f"  Saved: {filepath}")
+        success_count += 1
+
+    print(f"\nBatch complete. {success_count}/{len(urls)} screenshots saved.")
+
+
 def interactive_menu():
     menu_choices = [
         questionary.Separator("--- Crawling ---"),
         questionary.Choice("Start a new crawl", value="start"),
         questionary.Choice("Batch crawl from file", value="batch"),
         questionary.Choice("Re-run a previous crawl", value="rerun"),
+        questionary.Separator("--- Screenshots ---"),
+        questionary.Choice("Take a screenshot", value="screenshot"),
+        questionary.Choice("Batch screenshots from file", value="screenshot_batch"),
         questionary.Separator("--- Jobs ---"),
         questionary.Choice("Check job status", value="status"),
         questionary.Choice("Cancel a crawl", value="cancel"),
@@ -771,6 +951,8 @@ def interactive_menu():
         "start": prompt_start_crawl,
         "batch": prompt_batch_crawl,
         "rerun": prompt_rerun_crawl,
+        "screenshot": prompt_screenshot,
+        "screenshot_batch": prompt_screenshot_batch,
         "status": prompt_check_status,
         "cancel": prompt_cancel_crawl,
         "list": prompt_list_crawls,
