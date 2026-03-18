@@ -1,6 +1,6 @@
 # crawl-cli
 
-Interactive CLI and command-line tool for the [Cloudflare Browser Rendering Crawl API](https://developers.cloudflare.com/browser-rendering/).
+Interactive CLI and command-line tool for the [Cloudflare Browser Rendering APIs](https://developers.cloudflare.com/browser-rendering/) 
 
 ## Setup
 
@@ -27,29 +27,37 @@ python main.py
 **CLI mode** — pass a subcommand to skip the menu:
 
 ```bash
+# Crawling
 python main.py crawl --url https://example.com --limit 50 --formats markdown
 python main.py list
 python main.py status JOB_ID
+
+# Screenshots
+python main.py screenshot --url https://example.com
+python main.py screenshot --url https://example.com --full-page --format webp
+python main.py screenshot-batch --file urls.txt --full-page
 ```
 
-Results are saved under `output/{job_id}/`.
+Crawl results are saved under `output/{job_id}/`. Screenshots are saved under `output/screenshots/`.
 
 ## Docs
 
 - [CLI Reference](docs/cli.md) — all subcommands and flags
 - [Advanced Crawl Options](docs/advanced-options.md) — depth, URL patterns, rendering, auth, and more
-- [Batch Crawling](docs/batch.md) — crawl multiple URLs from a file
+- [Batch Crawling & Screenshots](docs/batch.md) — batch crawl or screenshot multiple URLs from a file
 
 ## Project Structure
 
 ```
-main.py              # Entry point: CLI vs interactive dispatch
-crawl/
-  config.py           # .env loading, API config, constants
-  api.py              # HTTP: start, poll, paginate, cancel
-  jobs.py             # crawl_jobs.json management
-  prompts.py          # Interactive questionary flows + menu
-  output.py           # Save results, search, stats, diff
-  cli.py              # argparse CLI mode
-  batch.py            # Batch crawling from URL list
+main.py                    # Entry point: CLI vs interactive dispatch
+core/
+  config.py                # .env loading, API config, constants
+  api.py                   # HTTP: start, poll, paginate, cancel crawls
+  jobs.py                  # crawl_jobs.json management
+  prompts.py               # Interactive questionary flows + menu
+  output.py                # Save crawl results, search, stats, diff
+  cli.py                   # argparse CLI mode
+  batch.py                 # Batch crawling from URL list
+  screenshot_api.py        # POST to /screenshot endpoint
+  screenshot_output.py     # Save screenshots + JSON log
 ```

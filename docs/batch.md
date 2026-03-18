@@ -1,10 +1,10 @@
-# Batch Crawling
+# Batch Operations
 
-Crawl multiple URLs in sequence from a single file.
+Process multiple URLs from a single file — for both crawling and screenshots.
 
 ## URL File Format
 
-The file can be either **plain text** (one URL per line) or a **JSON array**.
+The file can be either **plain text** (one URL per line) or a **JSON array**. The same format works for both batch crawls and batch screenshots.
 
 ### Plain text
 
@@ -28,7 +28,7 @@ https://blog.example.com
 ]
 ```
 
-## Usage
+## Batch Crawling
 
 ### CLI
 
@@ -50,9 +50,10 @@ Select **"Batch crawl from file"** from the menu. You'll be prompted for:
 1. Path to the URL list file
 2. Page limit per crawl
 3. Resource types to block
-4. Whether to wait for each crawl to complete
+4. Output formats
+5. Whether to wait for each crawl to complete
 
-## Behavior
+### Behavior
 
 - Each URL gets its own crawl job with a separate job ID
 - Jobs are labeled automatically as `batch 1/N`, `batch 2/N`, etc.
@@ -60,6 +61,40 @@ Select **"Batch crawl from file"** from the menu. You'll be prompted for:
 - With `--no-wait`, all crawls are started immediately and run in parallel on the API side
 - Failed crawls are logged but don't stop the batch
 
-## Output
+### Output
 
 Each crawl saves results independently under `output/{job_id}/`. Use `python main.py list` to see all batch jobs and their status.
+
+## Batch Screenshots
+
+### CLI
+
+```bash
+# Basic batch screenshots
+python main.py screenshot-batch --file urls.txt
+
+# Full-page WebP screenshots
+python main.py screenshot-batch --file urls.txt --full-page --format webp
+
+# Custom viewport
+python main.py screenshot-batch --file urls.txt --width 1920 --height 1080
+```
+
+### Interactive
+
+Select **"Batch screenshots from file"** from the menu. You'll be prompted for:
+
+1. Path to the URL list file
+2. Image format
+3. Full-page capture toggle
+4. Viewport dimensions
+
+### Behavior
+
+- Screenshots are taken sequentially, one URL at a time
+- Failed screenshots are logged but don't stop the batch
+- Each screenshot is saved individually and logged in `screenshot_log.json`
+
+### Output
+
+All screenshots are saved under `output/screenshots/`. A summary is printed at the end showing how many succeeded.

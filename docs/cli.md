@@ -117,3 +117,65 @@ python main.py batch --file urls.txt [options]
 | `--formats FORMAT [...]` | Output formats |
 | `--reject-resources TYPE [...]` | Resource types to block |
 | `--no-wait` | Start all crawls without waiting for completion |
+
+## screenshot
+
+Take a screenshot of a single URL. Screenshots are saved to `output/screenshots/` and logged in `screenshot_log.json`.
+
+```bash
+python main.py screenshot --url URL [options]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--url URL` | **(required)** URL to screenshot |
+| `--output PATH` | Custom output file path |
+| `--full-page` | Capture full scrollable page |
+| `--format FMT` | Image format: `png`, `jpeg`, `webp` (default: png) |
+| `--quality N` | JPEG/WebP quality 0-100 |
+| `--width N` | Viewport width in pixels (default: 1280) |
+| `--height N` | Viewport height in pixels (default: 720) |
+| `--device-scale N` | Device scale factor |
+| `--selector CSS` | CSS selector to capture |
+| `--wait-for CSS` | Wait for CSS selector before capture |
+| `--wait-until EVENT` | Navigation wait event (`load`, `domcontentloaded`, `networkidle0`, `networkidle2`) |
+| `--timeout N` | Navigation timeout in ms |
+| `--omit-background` | Transparent background |
+| `--user-agent TEXT` | Custom user agent string |
+| `--label TEXT` | Filename label suffix |
+
+**Examples:**
+
+```bash
+# Basic screenshot
+python main.py screenshot --url https://example.com
+
+# Full-page WebP with custom viewport
+python main.py screenshot --url https://example.com --full-page --format webp --width 1920 --height 1080
+
+# Wait for content to load before capturing
+python main.py screenshot --url https://example.com --wait-for ".main-content" --wait-until networkidle0
+```
+
+## screenshot-batch
+
+Take screenshots of multiple URLs from a file. See [Batch Crawling](batch.md) for file format details.
+
+```bash
+python main.py screenshot-batch --file urls.txt [options]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--file PATH` | **(required)** Path to URL list file |
+| `--full-page` | Capture full scrollable page |
+| `--format FMT` | Image format: `png`, `jpeg`, `webp` (default: png) |
+| `--quality N` | JPEG/WebP quality 0-100 |
+| `--width N` | Viewport width in pixels (default: 1280) |
+| `--height N` | Viewport height in pixels (default: 720) |
+| `--device-scale N` | Device scale factor |
+| `--wait-for CSS` | Wait for CSS selector before capture |
+| `--wait-until EVENT` | Navigation wait event |
+| `--timeout N` | Navigation timeout in ms |
+| `--omit-background` | Transparent background |
+| `--user-agent TEXT` | Custom user agent string |
