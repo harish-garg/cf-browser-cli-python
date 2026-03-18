@@ -2,19 +2,22 @@ import argparse
 import sys
 import time
 import json
-from core.config import RESOURCE_TYPES, DEFAULT_REJECT_RESOURCES, TERMINAL_STATUSES, SUCCESS_STATUSES, SCREENSHOT_FORMATS, WAIT_UNTIL_OPTIONS
-from core.api import start_crawl, get_crawl_status, cancel_crawl, poll_until_complete, get_crawl_results_paginated
-from core.jobs import load_jobs, add_job, update_job, find_job
-from core.output import save_results, get_statistics, search_results, diff_crawls
-from core.batch import run_batch, load_urls
-from core.screenshot_api import take_screenshot
-from core.screenshot_output import save_screenshot, log_screenshot
+from browserflare.config import RESOURCE_TYPES, DEFAULT_REJECT_RESOURCES, TERMINAL_STATUSES, SUCCESS_STATUSES, SCREENSHOT_FORMATS, WAIT_UNTIL_OPTIONS, PDF_PAGE_FORMATS
+from browserflare.api import start_crawl, get_crawl_status, cancel_crawl, poll_until_complete, get_crawl_results_paginated
+from browserflare.jobs import load_jobs, add_job, update_job, find_job
+from browserflare.output import save_results, get_statistics, search_results, diff_crawls
+from browserflare.batch import run_batch, load_urls
+from browserflare.screenshot_api import take_screenshot
+from browserflare.screenshot_output import save_screenshot, log_screenshot
+from browserflare.pdf_api import generate_pdf
+from browserflare.pdf_output import save_pdf, log_pdf
+from browserflare.payloads import build_crawl_payload, build_screenshot_payload, build_pdf_payload
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="crawl-cli",
-        description="Cloudflare Browser Rendering crawl CLI",
+        prog="browserflare",
+        description="Cloudflare Browser Rendering CLI",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -115,58 +118,92 @@ def build_parser():
     ssb_p.add_argument("--omit-background", action="store_true", help="Transparent background")
     ssb_p.add_argument("--user-agent", help="Custom user agent string")
 
+    # pdf
+    pdf_p = sub.add_parser("pdf", help="Generate a PDF from a URL or HTML")
+    pdf_source = pdf_p.add_mutually_exclusive_group(required=True)
+    pdf_source.add_argument("--url", help="URL to render as PDF")
+    pdf_source.add_argument("--html", help="Raw HTML string to render as PDF")
+    pdf_p.add_argument("--output", help="Custom output file path")
+    pdf_p.add_argument("--format", choices=PDF_PAGE_FORMATS, default="letter", help="Page format (default: letter)")
+    pdf_p.add_argument("--landscape", action="store_true", help="Landscape orientation")
+    pdf_p.add_argument("--print-background", action="store_true", help="Print background graphics")
+    pdf_p.add_argument("--scale", type=float, help="Scale of the webpage rendering (0.1-2)")
+    pdf_p.add_argument("--display-header-footer", action="store_true", help="Display header and footer")
+    pdf_p.add_argument("--header-template", help="HTML template for the header")
+    pdf_p.add_argument("--footer-template", help="HTML template for the footer")
+    pdf_p.add_argument("--margin-top", help="Top margin (e.g. '1cm', '0.5in')")
+    pdf_p.add_argument("--margin-bottom", help="Bottom margin")
+    pdf_p.add_argument("--margin-left", help="Left margin")
+    pdf_p.add_argument("--margin-right", help="Right margin")
+    pdf_p.add_argument("--width", type=int, default=1280, help="Viewport width (default: 1280)")
+    pdf_p.add_argument("--height", type=int, default=720, help="Viewport height (default: 720)")
+    pdf_p.add_argument("--wait-for", help="Wait for CSS selector before capture")
+    pdf_p.add_argument("--wait-until", choices=WAIT_UNTIL_OPTIONS, help="Navigation wait event")
+    pdf_p.add_argument("--timeout", type=int, help="Navigation timeout in ms")
+    pdf_p.add_argument("--user-agent", help="Custom user agent string")
+    pdf_p.add_argument("--label", help="Filename label suffix")
+
+    # pdf-batch
+    pdfb_p = sub.add_parser("pdf-batch", help="Batch PDF generation from URL file")
+    pdfb_p.add_argument("--file", required=True, help="Path to URL list file")
+    pdfb_p.add_argument("--format", choices=PDF_PAGE_FORMATS, default="letter", help="Page format (default: letter)")
+    pdfb_p.add_argument("--landscape", action="store_true", help="Landscape orientation")
+    pdfb_p.add_argument("--print-background", action="store_true", help="Print background graphics")
+    pdfb_p.add_argument("--scale", type=float, help="Scale of the webpage rendering (0.1-2)")
+    pdfb_p.add_argument("--width", type=int, default=1280, help="Viewport width (default: 1280)")
+    pdfb_p.add_argument("--height", type=int, default=720, help="Viewport height (default: 720)")
+    pdfb_p.add_argument("--wait-for", help="Wait for CSS selector before capture")
+    pdfb_p.add_argument("--wait-until", choices=WAIT_UNTIL_OPTIONS, help="Navigation wait event")
+    pdfb_p.add_argument("--timeout", type=int, help="Navigation timeout in ms")
+    pdfb_p.add_argument("--user-agent", help="Custom user agent string")
+
     return parser
 
 
-def _build_payload(args):
-    payload = {
-        "url": args.url,
-        "limit": args.limit,
-    }
+def _print_batch_event(event_type, **data):
+    if event_type == "no_urls":
+        print("No URLs found in file.")
+    elif event_type == "urls_found":
+        print(f"Found {data['count']} URL(s) to crawl.\n")
+    elif event_type == "crawl_start":
+        print(f"[{data['index']}/{data['total']}] Starting crawl for: {data['url']}")
+    elif event_type == "crawl_failed":
+        print(f"  Failed: {data['error']}")
+    elif event_type == "crawl_submitted":
+        print(f"  Job ID: {data['job_id']}")
+    elif event_type == "crawl_waiting":
+        print("  Waiting for completion...")
+    elif event_type == "crawl_ended":
+        print(f"  Ended with status: {data['status']}")
+    elif event_type == "crawl_complete":
+        print(f"  Complete! {data['page_count']} page(s) saved.")
+    elif event_type == "batch_done":
+        print(f"\nBatch complete. {data['started']}/{data['total']} crawls started.")
 
-    if args.reject_resources:
-        payload["rejectResourceTypes"] = args.reject_resources
-    if args.formats:
-        payload["formats"] = args.formats
 
-    if args.depth is not None:
-        payload["depth"] = args.depth
-    if args.source:
-        payload["source"] = args.source
-    if args.no_render:
-        payload["render"] = False
-    if args.external_links:
-        payload["includeExternalLinks"] = True
-    if args.subdomains:
-        payload["includeSubdomains"] = True
-    if args.include_patterns:
-        payload["includePatterns"] = args.include_patterns
-    if args.exclude_patterns:
-        payload["excludePatterns"] = args.exclude_patterns
-    if args.max_age is not None:
-        payload["maxAge"] = args.max_age
-    if args.modified_since:
-        ts = int(time.mktime(time.strptime(args.modified_since, "%Y-%m-%d")))
-        payload["modifiedSince"] = ts
-    if args.wait_selector:
-        payload["waitForSelector"] = {"selector": args.wait_selector}
-
-    if args.json_prompt or args.json_schema:
-        json_options = {}
-        if args.json_prompt:
-            json_options["prompt"] = args.json_prompt
-        if args.json_schema:
-            import os
-            if os.path.exists(args.json_schema):
-                with open(args.json_schema, "r", encoding="utf-8") as f:
-                    json_options["schema"] = json.load(f)
-        payload["jsonOptions"] = json_options
-
-    return payload
+def _print_progress(fetched, total):
+    print(f"  Fetched {fetched}/{total} records...")
 
 
 def cmd_crawl(args):
-    payload = _build_payload(args)
+    payload = build_crawl_payload(
+        url=args.url,
+        limit=args.limit,
+        formats=args.formats,
+        reject_resources=args.reject_resources,
+        depth=args.depth,
+        source=args.source,
+        render=False if args.no_render else None,
+        include_external_links=args.external_links,
+        include_subdomains=args.subdomains,
+        include_patterns=args.include_patterns,
+        exclude_patterns=args.exclude_patterns,
+        max_age=args.max_age,
+        modified_since=args.modified_since,
+        wait_selector=args.wait_selector,
+        json_prompt=args.json_prompt,
+        json_schema_path=args.json_schema,
+    )
     formats = args.formats
 
     print(f"Starting crawl for: {args.url}")
@@ -196,7 +233,7 @@ def cmd_crawl(args):
 
     if result.get("total", page_count) > page_count:
         print("Fetching remaining pages...")
-        result, fetch_err = get_crawl_results_paginated(job_id)
+        result, fetch_err = get_crawl_results_paginated(job_id, on_progress=_print_progress)
         if not fetch_err:
             page_count = len(result.get("records", []))
 
@@ -241,7 +278,7 @@ def cmd_status(args):
             page_count = len(result.get("records", []))
 
             if result.get("total", page_count) > page_count:
-                result, _ = get_crawl_results_paginated(args.job_id)
+                result, _ = get_crawl_results_paginated(args.job_id, on_progress=_print_progress)
                 page_count = len(result.get("records", []))
 
             job = find_job(args.job_id)
@@ -269,6 +306,7 @@ def cmd_status(args):
 def cmd_cancel(args):
     success, err = cancel_crawl(args.job_id)
     if success:
+        update_job(args.job_id, status="cancelled_by_user")
         print(f"Cancelled: {args.job_id}")
     else:
         print(f"Failed to cancel: {err}")
@@ -328,42 +366,25 @@ def cmd_batch(args):
         base_payload["rejectResourceTypes"] = args.reject_resources
     if args.formats:
         base_payload["formats"] = args.formats
-    run_batch(args.file, base_payload, wait=not args.no_wait, formats=args.formats)
-
-
-def _build_screenshot_payload(args):
-    payload = {
-        "url": args.url,
-        "viewport": {"width": args.width, "height": args.height},
-    }
-
-    if args.full_page:
-        payload["fullPage"] = True
-    if args.format != "png":
-        payload["type"] = args.format
-    if args.quality is not None:
-        payload["quality"] = args.quality
-    if args.device_scale is not None:
-        payload["viewport"]["deviceScaleFactor"] = args.device_scale
-    if getattr(args, "selector", None):
-        payload["selector"] = args.selector
-    if args.wait_for:
-        payload["waitForSelector"] = {"selector": args.wait_for}
-    if args.wait_until:
-        payload["gotoOptions"] = {"waitUntil": args.wait_until}
-    if args.timeout is not None:
-        payload.setdefault("gotoOptions", {})["timeout"] = args.timeout
-    if args.omit_background:
-        payload["omitBackground"] = True
-    if args.user_agent:
-        payload["userAgent"] = args.user_agent
-
-    return payload
+    run_batch(args.file, base_payload, wait=not args.no_wait, formats=args.formats, on_event=_print_batch_event)
 
 
 def cmd_screenshot(args):
-    payload = _build_screenshot_payload(args)
-    fmt = args.format
+    payload = build_screenshot_payload(
+        url=args.url,
+        width=args.width,
+        height=args.height,
+        full_page=args.full_page,
+        format=args.format,
+        quality=args.quality,
+        device_scale=args.device_scale,
+        selector=getattr(args, "selector", None),
+        wait_for=args.wait_for,
+        wait_until=args.wait_until,
+        timeout=args.timeout,
+        omit_background=args.omit_background,
+        user_agent=args.user_agent,
+    )
 
     print(f"Taking screenshot of: {args.url}")
     image_bytes, content_type, err = take_screenshot(payload)
@@ -385,6 +406,89 @@ def cmd_screenshot(args):
     print(f"Screenshot saved to: {filepath}")
 
 
+def cmd_pdf(args):
+    payload = build_pdf_payload(
+        url=getattr(args, "url", None),
+        html=getattr(args, "html", None),
+        width=args.width,
+        height=args.height,
+        format=args.format,
+        landscape=args.landscape,
+        print_background=args.print_background,
+        scale=args.scale,
+        display_header_footer=getattr(args, "display_header_footer", False),
+        header_template=getattr(args, "header_template", None),
+        footer_template=getattr(args, "footer_template", None),
+        margin_top=getattr(args, "margin_top", None),
+        margin_bottom=getattr(args, "margin_bottom", None),
+        margin_left=getattr(args, "margin_left", None),
+        margin_right=getattr(args, "margin_right", None),
+        wait_for=args.wait_for,
+        wait_until=args.wait_until,
+        timeout=args.timeout,
+        user_agent=args.user_agent,
+    )
+    source = args.url or args.html
+
+    print(f"Generating PDF for: {source[:80]}")
+    pdf_bytes, content_type, err = generate_pdf(payload)
+
+    if err:
+        print(f"PDF generation failed: {err}")
+        sys.exit(1)
+
+    if args.output:
+        import os
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+        with open(args.output, "wb") as f:
+            f.write(pdf_bytes)
+        filepath = args.output
+    else:
+        filepath = save_pdf(source, pdf_bytes, label=args.label)
+
+    log_pdf(source, filepath, payload)
+    print(f"PDF saved to: {filepath}")
+
+
+def cmd_pdf_batch(args):
+    urls = load_urls(args.file)
+    if not urls:
+        print("No URLs found in file.")
+        sys.exit(1)
+
+    print(f"Found {len(urls)} URL(s) to generate PDFs for.\n")
+    success_count = 0
+
+    for i, url in enumerate(urls, 1):
+        payload = build_pdf_payload(
+            url=url,
+            width=args.width,
+            height=args.height,
+            format=args.format,
+            landscape=args.landscape,
+            print_background=args.print_background,
+            scale=args.scale,
+            wait_for=args.wait_for,
+            wait_until=args.wait_until,
+            timeout=args.timeout,
+            user_agent=args.user_agent,
+        )
+
+        print(f"[{i}/{len(urls)}] Generating PDF: {url}")
+        pdf_bytes, content_type, err = generate_pdf(payload)
+
+        if err:
+            print(f"  Failed: {err}")
+            continue
+
+        filepath = save_pdf(url, pdf_bytes)
+        log_pdf(url, filepath, payload)
+        print(f"  Saved: {filepath}")
+        success_count += 1
+
+    print(f"\nBatch complete. {success_count}/{len(urls)} PDFs saved.")
+
+
 def cmd_screenshot_batch(args):
     urls = load_urls(args.file)
     if not urls:
@@ -395,8 +499,20 @@ def cmd_screenshot_batch(args):
     success_count = 0
 
     for i, url in enumerate(urls, 1):
-        args.url = url
-        payload = _build_screenshot_payload(args)
+        payload = build_screenshot_payload(
+            url=url,
+            width=args.width,
+            height=args.height,
+            full_page=args.full_page,
+            format=args.format,
+            quality=args.quality,
+            device_scale=args.device_scale,
+            wait_for=args.wait_for,
+            wait_until=args.wait_until,
+            timeout=args.timeout,
+            omit_background=args.omit_background,
+            user_agent=args.user_agent,
+        )
 
         print(f"[{i}/{len(urls)}] Screenshotting: {url}")
         image_bytes, content_type, err = take_screenshot(payload)
@@ -418,7 +534,7 @@ def run_cli(argv=None):
     args = parser.parse_args(argv)
 
     if not args.command:
-        return False  # no subcommand → fall through to interactive
+        return False  # no subcommand -> fall through to interactive
 
     commands = {
         "crawl": cmd_crawl,
@@ -431,6 +547,8 @@ def run_cli(argv=None):
         "batch": cmd_batch,
         "screenshot": cmd_screenshot,
         "screenshot-batch": cmd_screenshot_batch,
+        "pdf": cmd_pdf,
+        "pdf-batch": cmd_pdf_batch,
     }
 
     handler = commands.get(args.command)

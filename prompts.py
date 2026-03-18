@@ -1,7 +1,7 @@
 import os
 import time
 import questionary
-from core.config import (
+from browserflare.config import (
     RESOURCE_TYPES,
     DEFAULT_REJECT_RESOURCES,
     CRAWL_SOURCES,
@@ -10,12 +10,16 @@ from core.config import (
     SUCCESS_STATUSES,
     SCREENSHOT_FORMATS,
     WAIT_UNTIL_OPTIONS,
+    PDF_PAGE_FORMATS,
 )
-from core.jobs import load_jobs, add_job, update_job, delete_jobs, get_jobs_by_status, find_job
-from core.api import start_crawl, get_crawl_status, cancel_crawl, poll_until_complete, get_crawl_results_paginated
-from core.output import save_results, search_results, get_statistics, diff_crawls, find_result_path
-from core.screenshot_api import take_screenshot
-from core.screenshot_output import save_screenshot, log_screenshot
+from browserflare.jobs import load_jobs, add_job, update_job, delete_jobs, get_jobs_by_status, find_job
+from browserflare.api import start_crawl, get_crawl_status, cancel_crawl, poll_until_complete, get_crawl_results_paginated
+from browserflare.output import save_results, search_results, get_statistics, diff_crawls, find_result_path
+from browserflare.screenshot_api import take_screenshot
+from browserflare.screenshot_output import save_screenshot, log_screenshot
+from browserflare.pdf_api import generate_pdf
+from browserflare.pdf_output import save_pdf, log_pdf
+from browserflare.payloads import build_screenshot_payload, build_pdf_payload
 
 
 def _validate_url(val):
@@ -50,6 +54,10 @@ def _job_display(job):
     label = f" [{job['label']}]" if job.get("label") else ""
     job_id_short = job["job_id"][:8]
     return f"{job_id_short}...{label}  {job['url']}  ({job.get('status', '?')}, {job['started_at']})"
+
+
+def _print_progress(fetched, total):
+    print(f"  Fetched {fetched}/{total} records...")
 
 
 def _build_advanced_options():
@@ -271,7 +279,7 @@ def _prompt_auth():
 def prompt_start_crawl():
     target_url = questionary.text(
         "URL to crawl:",
-        default="https://example.com",
+        default="https://harishgarg.com",
         validate=_validate_url,
     ).ask()
     if target_url is None:
@@ -378,7 +386,7 @@ def prompt_start_crawl():
 
     if result.get("total", page_count) > page_count:
         print("Fetching remaining pages...")
-        result, fetch_err = get_crawl_results_paginated(job_id)
+        result, fetch_err = get_crawl_results_paginated(job_id, on_progress=_print_progress)
         if fetch_err:
             print(f"Warning: Could not fetch all pages: {fetch_err}")
         else:
@@ -427,7 +435,7 @@ def prompt_check_status():
 
         if result.get("total", page_count) > page_count:
             print("Fetching all pages...")
-            result, fetch_err = get_crawl_results_paginated(job_id)
+            result, fetch_err = get_crawl_results_paginated(job_id, on_progress=_print_progress)
             if not fetch_err:
                 page_count = len(result.get("records", []))
 
@@ -492,6 +500,7 @@ def prompt_cancel_crawl():
 
     success, err = cancel_crawl(job_id)
     if success:
+        update_job(job_id, status="cancelled_by_user")
         print(f"Crawl {job_id[:8]}... cancelled.")
     else:
         print(f"Failed to cancel: {err}")
@@ -706,7 +715,7 @@ def prompt_diff_crawls():
 
 
 def prompt_batch_crawl():
-    from core.batch import run_batch
+    from browserflare.batch import run_batch
 
     file_path = questionary.path(
         "Path to URL list file:",
@@ -749,13 +758,33 @@ def prompt_batch_crawl():
 
     wait = questionary.confirm("Wait for each crawl to complete?", default=True).ask()
 
-    run_batch(file_path, base_payload, wait=wait, formats=formats)
+    def _print_batch_event(event_type, **data):
+        if event_type == "no_urls":
+            print("No URLs found in file.")
+        elif event_type == "urls_found":
+            print(f"Found {data['count']} URL(s) to crawl.\n")
+        elif event_type == "crawl_start":
+            print(f"[{data['index']}/{data['total']}] Starting crawl for: {data['url']}")
+        elif event_type == "crawl_failed":
+            print(f"  Failed: {data['error']}")
+        elif event_type == "crawl_submitted":
+            print(f"  Job ID: {data['job_id']}")
+        elif event_type == "crawl_waiting":
+            print("  Waiting for completion...")
+        elif event_type == "crawl_ended":
+            print(f"  Ended with status: {data['status']}")
+        elif event_type == "crawl_complete":
+            print(f"  Complete! {data['page_count']} page(s) saved.")
+        elif event_type == "batch_done":
+            print(f"\nBatch complete. {data['started']}/{data['total']} crawls started.")
+
+    run_batch(file_path, base_payload, wait=wait, formats=formats, on_event=_print_batch_event)
 
 
 def prompt_screenshot():
     url = questionary.text(
         "URL to screenshot:",
-        default="https://example.com",
+        default="https://harishgarg.com",
         validate=_validate_url,
     ).ask()
     if url is None:
@@ -862,7 +891,7 @@ def prompt_screenshot():
 
 
 def prompt_screenshot_batch():
-    from core.batch import load_urls
+    from browserflare.batch import load_urls
 
     file_path = questionary.path(
         "Path to URL list file:",
@@ -901,14 +930,13 @@ def prompt_screenshot_batch():
     success_count = 0
 
     for i, url in enumerate(urls, 1):
-        payload = {
-            "url": url,
-            "viewport": {"width": int(width), "height": int(height)},
-        }
-        if full_page:
-            payload["fullPage"] = True
-        if fmt != "png":
-            payload["type"] = fmt
+        payload = build_screenshot_payload(
+            url=url,
+            width=int(width),
+            height=int(height),
+            full_page=full_page,
+            format=fmt,
+        )
 
         print(f"[{i}/{len(urls)}] Screenshotting: {url}")
         image_bytes, content_type, err = take_screenshot(payload)
@@ -925,6 +953,216 @@ def prompt_screenshot_batch():
     print(f"\nBatch complete. {success_count}/{len(urls)} screenshots saved.")
 
 
+def prompt_pdf():
+    source_type = questionary.select(
+        "PDF source:",
+        choices=["URL", "Raw HTML"],
+        default="URL",
+    ).ask()
+    if source_type is None:
+        return
+
+    payload = {}
+
+    if source_type == "URL":
+        url = questionary.text(
+            "URL to render as PDF:",
+            default="https://harishgarg.com",
+            validate=_validate_url,
+        ).ask()
+        if url is None:
+            return
+        payload["url"] = url
+        source = url
+    else:
+        html = questionary.text(
+            "HTML content (paste your HTML):",
+        ).ask()
+        if not html:
+            return
+        payload["html"] = html
+        source = html[:80]
+
+    page_format = questionary.select(
+        "Page format:",
+        choices=PDF_PAGE_FORMATS,
+        default="letter",
+    ).ask()
+    if page_format is None:
+        return
+
+    landscape = questionary.confirm("Landscape orientation?", default=False).ask()
+    print_bg = questionary.confirm("Print background graphics?", default=False).ask()
+
+    width = questionary.text(
+        "Viewport width:",
+        default="1280",
+        validate=_validate_positive_int,
+    ).ask()
+    height = questionary.text(
+        "Viewport height:",
+        default="720",
+        validate=_validate_positive_int,
+    ).ask()
+    payload["viewport"] = {"width": int(width), "height": int(height)}
+
+    pdf_options = {}
+    if page_format != "letter":
+        pdf_options["format"] = page_format
+    if landscape:
+        pdf_options["landscape"] = True
+    if print_bg:
+        pdf_options["printBackground"] = True
+
+    advanced = questionary.confirm("Configure advanced PDF options?", default=False).ask()
+    if advanced:
+        scale = questionary.text(
+            "Page scale (0.1-2, leave empty for default):",
+            default="",
+            validate=lambda v: True if not v else (
+                True if v.replace(".", "", 1).isdigit() and 0.1 <= float(v) <= 2
+                else "Must be between 0.1 and 2"
+            ),
+        ).ask()
+        if scale:
+            pdf_options["scale"] = float(scale)
+
+        show_header_footer = questionary.confirm("Display header and footer?", default=False).ask()
+        if show_header_footer:
+            pdf_options["displayHeaderFooter"] = True
+            header_tpl = questionary.text(
+                "Header HTML template (leave empty to skip):",
+                default="",
+            ).ask()
+            if header_tpl:
+                pdf_options["headerTemplate"] = header_tpl
+            footer_tpl = questionary.text(
+                "Footer HTML template (leave empty to skip):",
+                default="",
+            ).ask()
+            if footer_tpl:
+                pdf_options["footerTemplate"] = footer_tpl
+
+        margin_top = questionary.text("Top margin (e.g. '1cm', leave empty to skip):", default="").ask()
+        margin_bottom = questionary.text("Bottom margin:", default="").ask()
+        margin_left = questionary.text("Left margin:", default="").ask()
+        margin_right = questionary.text("Right margin:", default="").ask()
+        margin = {}
+        if margin_top:
+            margin["top"] = margin_top
+        if margin_bottom:
+            margin["bottom"] = margin_bottom
+        if margin_left:
+            margin["left"] = margin_left
+        if margin_right:
+            margin["right"] = margin_right
+        if margin:
+            pdf_options["margin"] = margin
+
+        wait_for = questionary.text(
+            "Wait for CSS selector before capture (leave empty to skip):",
+            default="",
+        ).ask()
+        if wait_for:
+            payload["waitForSelector"] = {"selector": wait_for}
+
+        wait_until = questionary.select(
+            "Navigation wait event:",
+            choices=["(default)"] + WAIT_UNTIL_OPTIONS,
+            default="(default)",
+        ).ask()
+        if wait_until and wait_until != "(default)":
+            payload["gotoOptions"] = {"waitUntil": wait_until}
+
+        user_agent = questionary.text(
+            "Custom user agent (leave empty to skip):",
+            default="",
+        ).ask()
+        if user_agent:
+            payload["userAgent"] = user_agent
+
+    if pdf_options:
+        payload["pdfOptions"] = pdf_options
+
+    label = questionary.text("Label for this PDF (optional):", default="").ask()
+
+    print(f"\nGenerating PDF for: {source}")
+    pdf_bytes, content_type, err = generate_pdf(payload)
+
+    if err:
+        print(f"PDF generation failed: {err}")
+        return
+
+    filepath = save_pdf(source, pdf_bytes, label=label or None)
+    log_pdf(source, filepath, payload)
+    print(f"PDF saved to: {filepath}")
+
+
+def prompt_pdf_batch():
+    from browserflare.batch import load_urls
+
+    file_path = questionary.path(
+        "Path to URL list file:",
+        validate=lambda v: True if os.path.isfile(v) else "File not found",
+    ).ask()
+    if not file_path:
+        return
+
+    page_format = questionary.select(
+        "Page format:",
+        choices=PDF_PAGE_FORMATS,
+        default="letter",
+    ).ask()
+    if page_format is None:
+        return
+
+    landscape = questionary.confirm("Landscape orientation?", default=False).ask()
+    print_bg = questionary.confirm("Print background graphics?", default=False).ask()
+
+    width = questionary.text(
+        "Viewport width:",
+        default="1280",
+        validate=_validate_positive_int,
+    ).ask()
+    height = questionary.text(
+        "Viewport height:",
+        default="720",
+        validate=_validate_positive_int,
+    ).ask()
+
+    urls = load_urls(file_path)
+    if not urls:
+        print("No URLs found in file.")
+        return
+
+    print(f"\nFound {len(urls)} URL(s) to generate PDFs for.\n")
+    success_count = 0
+
+    for i, url in enumerate(urls, 1):
+        payload = build_pdf_payload(
+            url=url,
+            width=int(width),
+            height=int(height),
+            format=page_format,
+            landscape=landscape,
+            print_background=print_bg,
+        )
+
+        print(f"[{i}/{len(urls)}] Generating PDF: {url}")
+        pdf_bytes, content_type, err = generate_pdf(payload)
+
+        if err:
+            print(f"  Failed: {err}")
+            continue
+
+        filepath = save_pdf(url, pdf_bytes)
+        log_pdf(url, filepath, payload)
+        print(f"  Saved: {filepath}")
+        success_count += 1
+
+    print(f"\nBatch complete. {success_count}/{len(urls)} PDFs saved.")
+
+
 def interactive_menu():
     menu_choices = [
         questionary.Separator("--- Crawling ---"),
@@ -934,6 +1172,9 @@ def interactive_menu():
         questionary.Separator("--- Screenshots ---"),
         questionary.Choice("Take a screenshot", value="screenshot"),
         questionary.Choice("Batch screenshots from file", value="screenshot_batch"),
+        questionary.Separator("--- PDFs ---"),
+        questionary.Choice("Generate a PDF", value="pdf"),
+        questionary.Choice("Batch PDFs from file", value="pdf_batch"),
         questionary.Separator("--- Jobs ---"),
         questionary.Choice("Check job status", value="status"),
         questionary.Choice("Cancel a crawl", value="cancel"),
@@ -953,6 +1194,8 @@ def interactive_menu():
         "rerun": prompt_rerun_crawl,
         "screenshot": prompt_screenshot,
         "screenshot_batch": prompt_screenshot_batch,
+        "pdf": prompt_pdf,
+        "pdf_batch": prompt_pdf_batch,
         "status": prompt_check_status,
         "cancel": prompt_cancel_crawl,
         "list": prompt_list_crawls,

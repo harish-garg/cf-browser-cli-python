@@ -70,3 +70,35 @@ Access pages that require authentication.
 | Custom headers | Arbitrary HTTP headers (e.g. `Authorization: Bearer token`) |
 
 In CLI mode, authentication is configured interactively. For automated use, consider setting headers via the API payload directly.
+
+## PDF Options
+
+Control PDF generation output. These apply to the `pdf` and `pdf-batch` subcommands.
+
+| Parameter | CLI Flag | Description |
+|-----------|----------|-------------|
+| `format` | `--format FMT` | Page size: `letter`, `legal`, `tabloid`, `ledger`, `a0`–`a6` (default: letter) |
+| `landscape` | `--landscape` | Landscape orientation |
+| `printBackground` | `--print-background` | Include background graphics in the PDF |
+| `scale` | `--scale N` | Scale of the webpage rendering, 0.1–2 (default: 1) |
+
+### Header & Footer
+
+| Parameter | CLI Flag | Description |
+|-----------|----------|-------------|
+| `displayHeaderFooter` | `--display-header-footer` | Show header and footer on each page |
+| `headerTemplate` | `--header-template HTML` | HTML template for the page header |
+| `footerTemplate` | `--footer-template HTML` | HTML template for the page footer |
+
+Templates support these CSS classes for injecting values: `date`, `title`, `url`, `pageNumber`, `totalPages`.
+
+### Margins
+
+| Parameter | CLI Flag | Description |
+|-----------|----------|-------------|
+| `margin.top` | `--margin-top VAL` | Top margin (e.g. `1cm`, `0.5in`) |
+| `margin.bottom` | `--margin-bottom VAL` | Bottom margin |
+| `margin.left` | `--margin-left VAL` | Left margin |
+| `margin.right` | `--margin-right VAL` | Right margin |
+
+In interactive mode, margin and header/footer options are available under **"Configure advanced PDF options"**.

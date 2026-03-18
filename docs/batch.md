@@ -1,18 +1,18 @@
 # Batch Operations
 
-Process multiple URLs from a single file — for both crawling and screenshots.
+Process multiple URLs from a single file — for crawling, screenshots, and PDFs.
 
 ## URL File Format
 
-The file can be either **plain text** (one URL per line) or a **JSON array**. The same format works for both batch crawls and batch screenshots.
+The file can be either **plain text** (one URL per line) or a **JSON array**. The same format works for batch crawls, screenshots, and PDFs.
 
 ### Plain text
 
 ```
 # urls.txt
-https://example.com
-https://docs.example.com
-https://blog.example.com
+https://harishgarg.com
+https://docs.harishgarg.com
+https://blog.harishgarg.com
 
 # Lines starting with # are ignored
 # Blank lines are ignored
@@ -22,9 +22,9 @@ https://blog.example.com
 
 ```json
 [
-  "https://example.com",
-  "https://docs.example.com",
-  "https://blog.example.com"
+  "https://harishgarg.com",
+  "https://docs.harishgarg.com",
+  "https://blog.harishgarg.com"
 ]
 ```
 
@@ -98,3 +98,38 @@ Select **"Batch screenshots from file"** from the menu. You'll be prompted for:
 ### Output
 
 All screenshots are saved under `output/screenshots/`. A summary is printed at the end showing how many succeeded.
+
+## Batch PDFs
+
+### CLI
+
+```bash
+# Basic batch PDFs
+python main.py pdf-batch --file urls.txt
+
+# A4 landscape with background graphics
+python main.py pdf-batch --file urls.txt --format a4 --landscape --print-background
+
+# Custom viewport
+python main.py pdf-batch --file urls.txt --width 1920 --height 1080
+```
+
+### Interactive
+
+Select **"Batch PDFs from file"** from the menu. You'll be prompted for:
+
+1. Path to the URL list file
+2. Page format
+3. Landscape orientation toggle
+4. Print background graphics toggle
+5. Viewport dimensions
+
+### Behavior
+
+- PDFs are generated sequentially, one URL at a time
+- Failed PDFs are logged but don't stop the batch
+- Each PDF is saved individually and logged in `pdf_log.json`
+
+### Output
+
+All PDFs are saved under `output/pdfs/`. A summary is printed at the end showing how many succeeded.

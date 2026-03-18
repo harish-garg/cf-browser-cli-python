@@ -1,3 +1,3 @@
-questionary
+browserflare
 python-dotenv
-requests
+questionary

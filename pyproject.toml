@@ -1,0 +1,10 @@
+[project]
+name = "browserflare-cli"
+version = "0.3.0"
+description = "CLI for Cloudflare Browser Rendering APIs"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "browserflare",
+    "questionary",
+]
