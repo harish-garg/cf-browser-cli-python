@@ -2,6 +2,8 @@
 
 CLI and interactive tool for the [Cloudflare Browser Rendering APIs](https://developers.cloudflare.com/browser-rendering/), built on the [browserflare](https://github.com/user/browserflare) library.
 
+> Prefer a GUI App? Look at our desktop app - [browserflare.xyz](https://browserflare.xyz/).
+
 ## Install
 
 ```bash
